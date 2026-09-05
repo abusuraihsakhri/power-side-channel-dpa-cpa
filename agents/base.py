@@ -8,9 +8,12 @@ import json
 import time
 import hmac
 import hashlib
+import secrets
+import logging
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
-from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 PHI_PATTERNS = [
     re.compile(r"\b(?:MRN|mrn)[:#\s-]*\d{4,10}\b", re.IGNORECASE),
@@ -57,8 +60,25 @@ class PHIGuard:
 class AuditTrail:
     """Cryptographic Tamper-Evident HMAC-SHA256 Audit Trail."""
     def __init__(self, secret_key: Optional[str] = None):
-        self.secret_key = (secret_key or os.getenv("AUDIT_SECRET_KEY", "power-side-channel-dpa-cpa-master-audit-key-2026")).encode("utf-8")
+        env_key = os.getenv("AUDIT_SECRET_KEY")
+        if secret_key:
+            self.secret_key = secret_key.encode("utf-8")
+        elif env_key:
+            self.secret_key = env_key.encode("utf-8")
+        else:
+            # Generate a secure random key if none provided — non-persistent across restarts
+            self.secret_key = secrets.token_bytes(32)
+            logger.warning(
+                "AUDIT_SECRET_KEY not set; generated a transient random key. "
+                "Audit signatures will not persist across restarts. "
+                "Set AUDIT_SECRET_KEY environment variable for persistent audit integrity."
+            )
         self.logs: List[Dict[str, Any]] = []
+
+    def _compute_signature(self, audit_id: str, ts: str, actor: str, actor_tier: str,
+                           event_type: str, payload_hash: str, prev_hash: str) -> str:
+        sign_string = f"{audit_id}|{ts}|{actor}|{actor_tier}|{event_type}|{payload_hash}|{prev_hash}"
+        return hmac.new(self.secret_key, sign_string.encode("utf-8"), hashlib.sha256).hexdigest()
 
     def log(self, actor: str, actor_tier: str, event_type: str, details: Dict[str, Any]) -> Dict[str, Any]:
         payload_str = json.dumps(details, sort_keys=True)
@@ -67,8 +87,7 @@ class AuditTrail:
         audit_id = f"AUDIT-{int(time.time()*1000)}-{len(self.logs)+1}"
         ts = datetime.now(timezone.utc).isoformat()
         prev_hash = self.logs[-1]["current_hash"] if self.logs else "GENESIS_BLOCK_0000000000000000"
-        sign_string = f"{audit_id}|{ts}|{actor}|{actor_tier}|{event_type}|{payload_hash}|{prev_hash}"
-        signature = hmac.new(self.secret_key, sign_string.encode("utf-8"), hashlib.sha256).hexdigest()
+        signature = self._compute_signature(audit_id, ts, actor, actor_tier, event_type, payload_hash, prev_hash)
         entry = {
             "audit_id": audit_id,
             "timestamp": ts,
@@ -83,9 +102,19 @@ class AuditTrail:
         return entry
 
     def verify_integrity(self) -> bool:
+        """Verify both chain linkage and HMAC signatures for all audit entries."""
         for i, entry in enumerate(self.logs):
+            # Verify chain linkage
             prev = self.logs[i-1]["current_hash"] if i > 0 else "GENESIS_BLOCK_0000000000000000"
             if entry["prev_hash"] != prev:
+                return False
+            # Verify HMAC signature
+            expected_sig = self._compute_signature(
+                entry["audit_id"], entry["timestamp"], entry["actor"],
+                entry["actor_tier"], entry["event_type"], entry["payload_hash"],
+                entry["prev_hash"]
+            )
+            if not hmac.compare_digest(entry["current_hash"], expected_sig):
                 return False
         return True
 

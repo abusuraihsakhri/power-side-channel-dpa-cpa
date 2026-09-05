@@ -4,8 +4,6 @@ Proves correctness of Hamming weight/distance leakage models and Pearson correla
 Standard: ISO/IEC 17825 Side-Channel Testing
 """
 import math
-import hashlib
-import hmac
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Tuple
 from enum import Enum
@@ -108,7 +106,7 @@ class FormalVerificationEngine:
         test_vectors = [
             (0x00, 0), (0x01, 1), (0x03, 2), (0x07, 3), (0x0F, 4),
             (0x1F, 5), (0x3F, 6), (0x7F, 7), (0xFF, 8), (0x55, 4),
-            (0xAA, 4), (0x12, 2), (0x63, 6), (0xAB, 6), (0xCD, 5),
+            (0xAA, 4), (0x12, 2), (0x63, 4), (0xAB, 5), (0xCD, 5),
         ]
         passed = 0
         max_error = 0.0
@@ -139,7 +137,7 @@ class FormalVerificationEngine:
         test_vectors = [
             (0x00, 0xFF, 8), (0x00, 0x00, 0), (0xFF, 0xFF, 0),
             (0x55, 0xAA, 8), (0x01, 0x02, 2), (0x0F, 0xF0, 8),
-            (0x63, 0x7C, 5), (0xAB, 0xCD, 4), (0x12, 0x34, 4),
+            (0x63, 0x7C, 5), (0xAB, 0xCD, 4), (0x12, 0x34, 3),
         ]
         passed = 0
         max_error = 0.0

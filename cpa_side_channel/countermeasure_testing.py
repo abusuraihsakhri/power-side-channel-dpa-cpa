@@ -5,7 +5,6 @@ Standard: ISO/IEC 17825 Side-Channel Testing
 """
 import math
 import random
-import hashlib
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Tuple
 from enum import Enum

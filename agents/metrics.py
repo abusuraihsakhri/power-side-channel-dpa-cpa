@@ -1,7 +1,6 @@
 """
 Prometheus Operational Metrics Exporter for power-side-channel-dpa-cpa.
 """
-import time
 from typing import Dict, Any
 
 class SystemMetricsCollector:

@@ -6,7 +6,6 @@ Standard: ISO/IEC 17825 Side-Channel Testing
 import math
 import time
 import random
-import statistics
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Tuple
 
