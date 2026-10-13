@@ -79,18 +79,18 @@ class PerformanceBenchmarkEngine:
 
     def generate_traces(self, n_traces: int, n_samples: int = 50) -> Tuple[List[List[float]], List[bytes]]:
         """Generate simulated power traces for benchmarking."""
-        random.seed(42)
+        rng = random.Random(42)
         traces = []
         plaintexts = []
         for _ in range(n_traces):
-            pt = bytes([random.randint(0, 255) for _ in range(16)])
+            pt = bytes([rng.randint(0, 255) for _ in range(16)])
             plaintexts.append(pt)
             trace = []
             for s in range(n_samples):
                 byte_idx = s % 16
                 sbox_out = AES_SBOX[pt[byte_idx] ^ self.SECRET_KEY[byte_idx]]
                 hw = bin(sbox_out).count("1") / 8.0
-                noise = random.gauss(0, 0.1)
+                noise = rng.gauss(0, 0.1)
                 trace.append(hw + noise)
             traces.append(trace)
         return traces, plaintexts
@@ -113,61 +113,37 @@ class PerformanceBenchmarkEngine:
         self,
         trace_counts: Optional[List[int]] = None,
     ) -> List[CPAConvergenceResult]:
-        """
-        Benchmark CPA convergence: measure traces needed to recover AES key.
-        Tests at multiple trace counts to find the minimum for successful recovery.
-        """
+        """Rank the *known true key* against all 256 candidates at each trace count."""
         if trace_counts is None:
             trace_counts = [100, 500, 1000, 2000, 5000, 10000]
+        if not trace_counts or any(n < 2 for n in trace_counts):
+            raise ValueError("trace_counts must contain integers greater than one")
 
-        max_traces = max(trace_counts)
-        traces, plaintexts = self.generate_traces(max_traces)
-
+        traces, plaintexts = self.generate_traces(max(trace_counts), n_samples=1)
         results = []
         for n in trace_counts:
             start = time.perf_counter_ns()
-
-            # CPA attack on first byte
-            best_corr = 0.0
-            best_key = 0
+            sample_values = [traces[i][0] for i in range(n)]
+            correlations = []
             for key_guess in range(256):
-                values = []
-                for i in range(n):
-                    sbox_out = AES_SBOX[plaintexts[i][0] ^ key_guess]
-                    values.append(bin(sbox_out).count("1") / 8.0)
-                corr = abs(self._pearson_correlation(
-                    [traces[i][0] for i in range(n)], values
-                ))
-                if corr > best_corr:
-                    best_corr = corr
-                    best_key = key_guess
+                predicted = [
+                    AES_SBOX[plaintexts[i][0] ^ key_guess].bit_count() / 8.0
+                    for i in range(n)
+                ]
+                correlations.append(abs(self._pearson_correlation(sample_values, predicted)))
 
+            ranked_keys = sorted(range(256), key=lambda k: (-correlations[k], k))
+            best_key = ranked_keys[0]
+            true_key = self.SECRET_KEY[0]
             elapsed_ms = (time.perf_counter_ns() - start) / 1e6
-            correct = best_key == self.SECRET_KEY[0]
-
-            # Compute key rank
-            all_corrs = []
-            for key_guess in range(256):
-                values = []
-                for i in range(n):
-                    sbox_out = AES_SBOX[plaintexts[i][0] ^ key_guess]
-                    values.append(bin(sbox_out).count("1") / 8.0)
-                corr = abs(self._pearson_correlation(
-                    [traces[i][0] for i in range(n)], values
-                ))
-                all_corrs.append(corr)
-
-            all_corrs.sort(reverse=True)
-            key_rank = all_corrs.index(best_corr) + 1 if best_corr in all_corrs else 256
 
             results.append(CPAConvergenceResult(
                 n_traces=n,
-                key_rank=key_rank,
-                correct_key_recovered=correct,
+                key_rank=ranked_keys.index(true_key) + 1,
+                correct_key_recovered=(best_key == true_key),
                 elapsed_ms=round(elapsed_ms, 2),
-                correlation_peak=round(best_corr, 6),
+                correlation_peak=round(correlations[best_key], 6),
             ))
-
         return results
 
     def benchmark_correlation_speed(
@@ -182,11 +158,10 @@ class PerformanceBenchmarkEngine:
 
         results = []
         for n in trace_counts:
-            traces, plaintexts = self.generate_traces(min(n, 10000))
-            values = [bin(AES_SBOX[plaintexts[i][0] ^ self.SECRET_KEY[0]]).count("1") / 8.0
-                      for i in range(min(n, len(traces)))]
-
-            actual_n = min(n, len(traces))
+            traces, plaintexts = self.generate_traces(n, n_samples=1)
+            values = [AES_SBOX[plaintexts[i][0] ^ self.SECRET_KEY[0]].bit_count() / 8.0
+                      for i in range(n)]
+            actual_n = n
             start = time.perf_counter_ns()
             for _ in range(10):
                 self._pearson_correlation(
@@ -210,7 +185,9 @@ class PerformanceBenchmarkEngine:
         """
         Benchmark key candidate ranking latency for the full AES key space.
         """
-        traces, plaintexts = self.generate_traces(5000)
+        if not 2 <= n_candidates <= 256:
+            raise ValueError("n_candidates must be between 2 and 256")
+        traces, plaintexts = self.generate_traces(5000, n_samples=1)
         n = len(traces)
 
         start = time.perf_counter_ns()

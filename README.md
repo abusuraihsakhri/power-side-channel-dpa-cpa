@@ -1,166 +1,68 @@
 # Power Side Channel DPA CPA
 
-> **Domain:** Hardware Security & Side-Channel Cryptanalysis
-> **Standard:** ISO/IEC 17825 Side-Channel Testing
+A Python project for **synthetic correlation power analysis (CPA) benchmarking** and **threshold-based audit demonstrations**. Its two analysis paths are separate: `cpa_side_channel/` contains synthetic AES S-Box leakage, correlation and countermeasure experiments; `agents/` contains a multi-worker rule evaluator with a FastAPI endpoint and an in-memory HMAC audit trail.
 
-<div align="center">
+**Scope:** The included power traces are simulated, not oscilloscope measurements. The rule-based evaluation is not an implementation of DPA key recovery. The verification module checks supplied examples and arithmetic; its outputs are not mathematical proofs of resistance or certification against ISO/IEC 17825.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-3776AB.svg?logo=python&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688.svg?logo=fastapi&logoColor=white)
-![Audit Trail](https://img.shields.io/badge/Audit-HMAC--SHA256_Tamper--Evident-brightgreen.svg)
-![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg?logo=docker&logoColor=white)
+## Browser demonstration
 
-</div>
+Open `web/index.html` directly to run the **local audit sandbox**. It reproduces the Python worker thresholds without uploading data or inventing signatures. Alternatively, start the API and open `http://127.0.0.1:8000/app/` to use the same page in connected mode. The browser demonstration uses JavaScript, not Python or Pyodide.
 
----
-
-## What It Does
-
-A Correlation Power Analysis (CPA) and Differential Power Analysis (DPA) side-channel attack simulation framework. Evaluates Hamming weight/distance power leakage models across AES S-Box rounds, calculates Pearson correlation coefficients, and tests resistance to countermeasures including masking, hiding, and shuffling.
-
----
-
-## Key Capabilities
-
-- **CPA/DPA Engine**: Simulates power trace generation and correlation-based key recovery attacks on AES implementations.
-- **Formal Verification**: Proves correctness of Hamming weight/distance leakage models and Pearson correlation calculations against known test vectors.
-- **Countermeasure Testing**: Evaluates resistance to first/second-order masking, clock jitter, noise injection, and S-Box shuffling.
-- **Performance Benchmarking**: Measures convergence speed, correlation throughput, and key ranking latency.
-- **Multi-Agent Supervisor**: Distributed worker architecture for task evaluation with consensus-based urgency classification.
-- **Zero-PHI Outbound Guard**: Active pattern inspection blocking sensitive identifiers (SSNs, MRNs, phone numbers) from outbound data.
-- **HMAC-SHA256 Audit Trail**: Cryptographically signed, tamper-evident chained audit logs with signature verification.
-- **FastAPI REST API**: OpenAPI 3.1 endpoints for remote task evaluation and audit trail retrieval.
-
----
+The local interface does not perform CPA or DPA; use the Python benchmark modules for synthetic CPA experiments. The API is not authenticated and must not be exposed to untrusted networks without an authentication and authorization layer.
 
 ## Installation
 
+Requires Python 3.10+.
+
 ```bash
-pip install -e .
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[test]"
+python -m pytest -v
 ```
 
-For development (with test dependencies):
-```bash
-pip install fastapi uvicorn pydantic pytest
-```
+On Windows, activate with `.venv\Scripts\activate`.
 
----
+## Use
 
-## CLI Usage
+Run the primary supervisor and batch-processing CLI from the repository root:
 
-### Single Task Evaluation
 ```bash
 python cli.py audit --task-id TASK-001 --target KEY-01 --primary 28.5 --secondary 14.2 --critical --status DISCORDANT
-```
-
-### Batch Processing
-```bash
 python cli.py batch -i sample.csv -o results.csv
-```
-
-### Supervisory Chat
-```bash
-python cli.py chat "What is the system status?"
-```
-
-### Verify Audit Trail
-```bash
 python cli.py verify-audit
-```
-
-### Launch REST API Server
-```bash
 python cli.py serve --host 127.0.0.1 --port 8000
 ```
 
----
+The installed `power-side-channel-dpa-cpa` command invokes the separate `cpa_side_channel.cli` evaluator (it does not expose `verify-audit`). CSV flag values accept `true/false`, `yes/no` and `1/0`; invalid strings are rejected.
 
-## REST API Endpoints
+Run the synthetic CPA benchmarks through `cpa_side_channel.performance_benchmark.PerformanceBenchmarkEngine`, or run the standalone load simulator with `python simulator.py 100`.
 
-| Endpoint | Method | Description |
-|:---------|:-------|:------------|
-| `/health` | GET | Service health check |
-| `/metrics` | GET | Operational metrics |
-| `/api/audit` | POST | Submit task for evaluation |
-| `/api/chat` | POST | Supervisory chat query |
-| `/api/audit/logs` | GET | Retrieve and verify HMAC audit trail |
+## API
 
----
+With the server running, see `/docs` for the interactive OpenAPI reference. Routes include `GET /health`, `GET /metrics`, `POST /api/audit`, `POST /api/chat` and `GET /api/audit/logs`. The audit trail is held in process memory, **not persisted across restarts**. A configured signing key allows HMAC signature consistency only for retained audit data. The PHI pattern guard is limited and does not establish HIPAA de-identification compliance.
 
-## Testing
+## Containers and secrets
 
-Run the full test suite:
-```bash
-pytest -v
-```
-
-Execute the high-throughput simulation:
-```bash
-python simulator.py 1000
-```
-
----
-
-## Configuration
-
-| Environment Variable | Description | Default |
-|:---------------------|:------------|:--------|
-| `AUDIT_SECRET_KEY` | Secret key for HMAC-SHA256 audit signatures | Random (ephemeral) |
-| `MODEL_PROVIDER` | LLM provider (`mock`, `ollama`, `claude`, `openai`) | `mock` |
-
-**Note:** Set `AUDIT_SECRET_KEY` to a persistent value in production. Without it, a random key is generated at startup and audit signatures will not be verifiable across restarts.
-
----
-
-## Architecture
-
-```
-power-side-channel-dpa-cpa/
-├── agents/                    # Multi-agent supervisor system
-│   ├── api.py                 # FastAPI REST server
-│   ├── base.py                # Security, PHI guard, HMAC audit trail
-│   ├── models.py              # Pydantic data models
-│   ├── supervisor.py          # Master orchestrator
-│   ├── workers.py             # Specialized evaluation workers
-│   ├── metrics.py             # Prometheus metrics exporter
-│   ├── learning.py            # Bayesian calibration engine
-│   ├── llm_factory.py         # LLM provider abstraction
-│   └── streamer.py            # WebSocket telemetry broadcaster
-├── cpa_side_channel/          # CPA/DPA core engine
-│   ├── engine.py              # Domain evaluation engine
-│   ├── agents.py              # Side-channel analysis agents
-│   ├── models.py              # Data models
-│   ├── formal_verification.py # Mathematical proof verification
-│   ├── countermeasure_testing.py  # Countermeasure resistance tests
-│   ├── performance_benchmark.py   # Performance benchmarks
-│   ├── server.py              # Alternative FastAPI server
-│   └── cli.py                 # Standalone CLI
-├── tests/                     # Pytest test suite
-├── web/index.html             # Operations console UI
-├── cli.py                     # Main CLI entry point
-├── simulator.py               # High-throughput simulation
-├── enrichment.py              # Enrichment feature suite
-├── Dockerfile                 # Container build
-└── docker-compose.yml         # Container orchestration
-```
-
----
-
-## Container Deployment
+Copy `.env.example` to `.env` and set a unique, persistent `AUDIT_SECRET_KEY` generated using a cryptographically secure random generator, for example:
 
 ```bash
-docker build -t power-side-channel-dpa-cpa .
-docker run -p 8000:8000 -e AUDIT_SECRET_KEY=your-secret-key power-side-channel-dpa-cpa
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+docker compose up --build
 ```
 
-Or with Docker Compose:
+Compose rejects an unset signing key. By default it publishes port 8000 only on `127.0.0.1`. Never commit a real `.env` or reuse the previously committed sample signing key.
+
+## Testing and deployment
+
 ```bash
-docker-compose up -d
+python -m compileall -q agents cpa_side_channel cli.py simulator.py enrichment.py
+node --check web/app.js
+python -m pytest -v
 ```
 
----
+GitHub Actions runs Python tests on 3.10–3.12 and a separate workflow publishes only the static `web/` directory to GitHub Pages when that workflow is enabled. Server-side Python is not hosted on Pages. Browser support: current Chrome, Firefox, Safari and Edge with JavaScript enabled.
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+MIT. See [LICENSE](LICENSE).

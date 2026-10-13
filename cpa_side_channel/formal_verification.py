@@ -1,6 +1,6 @@
 """
 Formal Verification Module for CPA/DPA Side-Channel Attack Agent.
-Proves correctness of Hamming weight/distance leakage models and Pearson correlation.
+Checks arithmetic of Hamming weight/distance and Pearson correlation on examples; not a formal proof.
 Standard: ISO/IEC 17825 Side-Channel Testing
 """
 import math
@@ -23,7 +23,7 @@ class VerificationResult(str, Enum):
 
 @dataclass
 class LeakageModelProof:
-    """Proof that a leakage model correctly predicts power consumption."""
+    """Summary of deterministic leakage-model test vectors (not a physical validation)."""
     model: LeakageModel
     test_vectors_passed: int
     test_vectors_total: int
@@ -35,7 +35,7 @@ class LeakageModelProof:
 
 @dataclass
 class CorrelationProof:
-    """Proof that Pearson correlation coefficient is correctly computed."""
+    """Result of comparison to a supplied reference correlation value."""
     known_x: List[float] = field(default_factory=list)
     known_y: List[float] = field(default_factory=list)
     expected_r: float = 0.0
@@ -46,7 +46,7 @@ class CorrelationProof:
 
 @dataclass
 class ConvergenceProof:
-    """Proof that key recovery probability increases with trace count."""
+    """Checks whether supplied key ranks are monotone; not a proof of convergence."""
     trace_counts: List[int] = field(default_factory=list)
     key_ranks: List[int] = field(default_factory=list)
     is_monotonic: bool = False
@@ -76,7 +76,9 @@ AES_SBOX = [
 
 def hamming_weight(value: int) -> int:
     """Compute Hamming weight (number of set bits) of an integer."""
-    return bin(value).count("1")
+    if not isinstance(value, int) or value < 0:
+        raise ValueError("Hamming weight requires a non-negative integer")
+    return value.bit_count()
 
 
 def hamming_distance(a: int, b: int) -> int:
@@ -92,7 +94,7 @@ def toggle_count(prev: int, curr: int) -> int:
 class FormalVerificationEngine:
     """
     Formal verification engine for CPA/DPA side-channel analysis.
-    Proves correctness of leakage models, correlation calculations, and convergence.
+    Runs deterministic arithmetic checks; does not establish side-channel resistance.
     """
 
     STANDARD = "ISO/IEC 17825 Side-Channel Testing"
@@ -101,7 +103,7 @@ class FormalVerificationEngine:
     def verify_hamming_weight_model() -> LeakageModelProof:
         """
         Verify that the Hamming weight model correctly predicts power consumption.
-        Tests against known test vectors from the ISO/IEC 17825 standard.
+        Tests hand-selected arithmetic vectors, not published standard conformance vectors.
         """
         test_vectors = [
             (0x00, 0), (0x01, 1), (0x03, 2), (0x07, 3), (0x0F, 4),
@@ -168,43 +170,38 @@ class FormalVerificationEngine:
         y: Optional[List[float]] = None,
         expected_r: Optional[float] = None,
     ) -> CorrelationProof:
-        """
-        Verify Pearson correlation coefficient calculation against known test vectors.
-        Uses NIST-style reference values when no custom data is provided.
-        """
-        if x is None:
-            # Known test vector: strong positive correlation
+        """Compare computed Pearson r to a supplied reference when one exists."""
+        if x is None and y is None:
             x = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
             y = [2.1, 4.0, 5.9, 8.1, 10.0, 11.8, 14.1, 16.0, 17.9, 20.1]
-            expected_r = 0.9999
+            if expected_r is None:
+                expected_r = 0.9999
+        if x is None or y is None or len(x) < 2 or len(x) != len(y):
+            return CorrelationProof(result=VerificationResult.FAIL)
+        if not all(math.isfinite(value) for value in x + y):
+            return CorrelationProof(known_x=x, known_y=y, result=VerificationResult.FAIL)
+        if expected_r is not None and (not math.isfinite(expected_r) or not -1 <= expected_r <= 1):
+            return CorrelationProof(known_x=x, known_y=y, result=VerificationResult.FAIL)
 
         n = len(x)
-        if n < 2 or len(y) != n:
-            return CorrelationProof(result=VerificationResult.FAIL)
-
         mean_x = sum(x) / n
         mean_y = sum(y) / n
+        covariance = sum((a - mean_x) * (b - mean_y) for a, b in zip(x, y))
+        sx = math.sqrt(sum((a - mean_x) ** 2 for a in x))
+        sy = math.sqrt(sum((b - mean_y) ** 2 for b in y))
+        if sx == 0 or sy == 0:
+            return CorrelationProof(known_x=x, known_y=y, result=VerificationResult.INCONCLUSIVE)
 
-        cov = sum((x[i] - mean_x) * (y[i] - mean_y) for i in range(n))
-        std_x = math.sqrt(sum((xi - mean_x) ** 2 for xi in x))
-        std_y = math.sqrt(sum((yi - mean_y) ** 2 for yi in y))
-
-        if std_x == 0 or std_y == 0:
-            return CorrelationProof(
-                known_x=x, known_y=y,
-                computed_r=0.0, absolute_error=0.0,
-                result=VerificationResult.INCONCLUSIVE,
-            )
-
-        computed_r = cov / (std_x * std_y)
-        abs_error = abs(computed_r - expected_r) if expected_r is not None else 0.0
-
-        result = VerificationResult.PASS if abs_error < 0.001 else VerificationResult.FAIL
+        computed_r = max(-1.0, min(1.0, covariance / (sx * sy)))
+        error = abs(computed_r - expected_r) if expected_r is not None else 0.0
+        result = (VerificationResult.INCONCLUSIVE if expected_r is None
+                  else VerificationResult.PASS if error < 0.001
+                  else VerificationResult.FAIL)
         return CorrelationProof(
             known_x=x, known_y=y,
-            expected_r=expected_r or 0.0,
+            expected_r=expected_r if expected_r is not None else 0.0,
             computed_r=round(computed_r, 6),
-            absolute_error=round(abs_error, 6),
+            absolute_error=round(error, 6),
             result=result,
         )
 
@@ -214,6 +211,12 @@ class FormalVerificationEngine:
         Verify that the leakage model correctly predicts the power consumption
         of the AES S-Box operation for a given plaintext and key byte.
         """
+        if not isinstance(plaintext_byte, int) or not 0 <= plaintext_byte <= 255:
+            raise ValueError("plaintext_byte must be an integer in [0, 255]")
+        if not isinstance(key_byte, int) or not 0 <= key_byte <= 255:
+            raise ValueError("key_byte must be an integer in [0, 255]")
+        if not isinstance(model, LeakageModel):
+            raise ValueError("model must be a LeakageModel")
         sbox_input = plaintext_byte ^ key_byte
         sbox_output = AES_SBOX[sbox_input]
 
@@ -239,25 +242,24 @@ class FormalVerificationEngine:
         trace_counts: Optional[List[int]] = None,
         key_ranks: Optional[List[int]] = None,
     ) -> ConvergenceProof:
-        """
-        Verify that key recovery probability increases monotonically
-        with the number of power traces (more traces -> lower key rank).
-        """
-        if trace_counts is None:
+        """Check a given sequence of ranks, without claiming inevitable convergence."""
+        if trace_counts is None and key_ranks is None:
             trace_counts = [100, 500, 1000, 2000, 5000, 10000]
             key_ranks = [256, 128, 32, 8, 2, 1]
-
-        is_monotonic = all(
-            key_ranks[i] >= key_ranks[i + 1]
-            for i in range(len(key_ranks) - 1)
-        )
-
-        result = VerificationResult.PASS if is_monotonic else VerificationResult.FAIL
+        if (trace_counts is None or key_ranks is None
+                or len(trace_counts) != len(key_ranks) or len(trace_counts) < 2
+                or any(n < 2 for n in trace_counts)
+                or any(a >= b for a, b in zip(trace_counts, trace_counts[1:]))
+                or any(not 1 <= rank <= 256 for rank in key_ranks)):
+            return ConvergenceProof(
+                trace_counts=trace_counts or [], key_ranks=key_ranks or [],
+                result=VerificationResult.FAIL,
+            )
+        monotonic = all(a >= b for a, b in zip(key_ranks, key_ranks[1:]))
         return ConvergenceProof(
-            trace_counts=trace_counts,
-            key_ranks=key_ranks,
-            is_monotonic=is_monotonic,
-            result=result,
+            trace_counts=trace_counts, key_ranks=key_ranks,
+            is_monotonic=monotonic,
+            result=VerificationResult.PASS if monotonic else VerificationResult.FAIL,
         )
 
     def full_verification_suite(self) -> Dict[str, Any]:
