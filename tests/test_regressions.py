@@ -50,8 +50,8 @@ def test_csv_batch_false_flag_is_not_truthy(tmp_path, runner, status_field):
 def test_csv_batch_rejects_invalid_boolean(tmp_path, runner):
     source = tmp_path / "input.csv"
     source.write_text(
-        "task_id,target_identifier,primary_metric,secondary_metric,status_descriptor,is_critical_flag\\n"
-        "T1,KEY-01,1,1,NOMINAL,sometimes\\n".replace("\\n", "\n"),
+        "task_id,target_identifier,primary_metric,secondary_metric,status_descriptor,is_critical_flag\n"
+        "T1,KEY-01,1,1,NOMINAL,sometimes\n",
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="is_critical_flag"):
