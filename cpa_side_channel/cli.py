@@ -10,6 +10,16 @@ from .agents import SideChannelCoordinator
 
 coordinator = SideChannelCoordinator()
 
+def parse_csv_bool(value: str) -> bool:
+    """Parse CSV booleans explicitly; nonempty strings must not imply True."""
+    normalized = (value or "").strip().casefold()
+    if normalized in {"", "false", "0", "no", "n"}:
+        return False
+    if normalized in {"true", "1", "yes", "y"}:
+        return True
+    raise ValueError(f"Invalid is_critical_flag: {value!r}; expected true/false or 1/0")
+
+
 
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="power-side-channel-dpa-cpa", description="Correlation Power Analysis (CPA) & DPA Side-Channel Attack Agent")
@@ -74,7 +84,7 @@ def main(argv=None):
             fieldnames = list(reader.fieldnames or [])
             rows = list(reader)
 
-        out_fields = fieldnames + ["overall_status", "total_alerts", "critical_count", "consensus_summary"]
+        out_fields = list(dict.fromkeys(fieldnames + ["overall_status", "total_alerts", "critical_count", "consensus_summary"]))
         out_rows = []
         for r in rows:
             payload = FrontierPayload(
@@ -83,7 +93,7 @@ def main(argv=None):
                 primary_metric=float(r.get("primary_metric", 15.0)),
                 secondary_metric=float(r.get("secondary_metric", 5.0)),
                 status_descriptor=r.get("status_descriptor", "NOMINAL"),
-                is_critical_flag=bool(r.get("is_critical_flag", False)),
+                is_critical_flag=parse_csv_bool(r.get("is_critical_flag")),
             )
             dossier = coordinator.process(payload)
             row_dict = dict(r)
