@@ -12,6 +12,7 @@ from agents.supervisor import SystemSupervisor
 from cli import main as main_cli
 from cpa_side_channel.cli import main as cpa_cli
 from cpa_side_channel.performance_benchmark import AES_SBOX, PerformanceBenchmarkEngine
+from cpa_side_channel.formal_verification import FormalVerificationEngine, VerificationResult, LeakageModel
 
 
 @pytest.mark.parametrize(
@@ -104,3 +105,20 @@ def test_trace_generator_does_not_reset_global_random_state():
     traces, plaintexts = benchmark.generate_traces(3, n_samples=1)
     assert len(traces) == len(plaintexts) == 3
     assert random.getstate() == state_before
+
+
+def test_pearson_requires_explicit_reference_for_custom_data():
+    engine = FormalVerificationEngine()
+    assert engine.verify_pearson_correlation([1, 2], [2, 4]).result == VerificationResult.INCONCLUSIVE
+    assert engine.verify_pearson_correlation([1, 2], [2, 4], 1.0).result == VerificationResult.PASS
+    assert engine.verify_pearson_correlation([1, 2], [2]).result == VerificationResult.FAIL
+    assert engine.verify_pearson_correlation([1, 2], None).result == VerificationResult.FAIL
+
+
+def test_math_checkers_reject_bad_values():
+    engine = FormalVerificationEngine()
+    for bad in (-1, 256):
+        with pytest.raises(ValueError):
+            engine.verify_aes_sbox_leakage(bad, 0, LeakageModel.HAMMING_WEIGHT)
+    assert engine.verify_convergence_monotonicity([10, 5], [10, 1]).result == VerificationResult.FAIL
+    assert engine.verify_convergence_monotonicity([10, 20], [2, 3]).result == VerificationResult.FAIL
